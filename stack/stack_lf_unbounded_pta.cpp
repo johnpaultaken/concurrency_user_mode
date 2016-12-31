@@ -103,6 +103,11 @@ int main(int argc, char ** argv)
             vf.emplace_back(async([&slf, &result]() {int ip = 0; if (slf.pop(ip)) result.push(ip); }));
             vf.emplace_back(async([&slf, &result]() {int ip = 0; if (slf.pop(ip)) result.push(ip); }));
         }
+
+        for (auto & task : vf)
+        {
+            task.wait();
+        }
     }
 
     int i = 0;

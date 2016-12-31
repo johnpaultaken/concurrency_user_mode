@@ -92,39 +92,14 @@ int main(int argc, char ** argv)
 
     {
         vector<future<void>> vt;
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
-        vt.push_back(async(somecode));
+        for (size_t i = 0; i < 30; ++i)
+        {
+            vt.push_back(async(somecode));
+        }
+        for (auto & task : vt)
+        {
+            task.wait();
+        }
     }
 
     cout << "\ndone";
