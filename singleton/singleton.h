@@ -3,6 +3,10 @@
 #include <atomic>
 #include <mutex>
 
+using std::memory_order_relaxed;
+using std::memory_order_acquire;
+using std::memory_order_release;
+
 /*
 The first m_pObj.load() in get() need memory_order_acquire to synchronize with 
     release semantic on the atomic m_pObj.store().
