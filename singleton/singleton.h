@@ -1,13 +1,7 @@
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <vector>
-#include <future>
+#pragma once
 
-//-----------------------------------------------------------
 #include <atomic>
 #include <mutex>
-using namespace std;
 
 /*
 The first m_pObj.load() in get() need memory_order_acquire to synchronize with 
@@ -49,59 +43,12 @@ public:
     }
 
 private:
-    static atomic<T *> m_pObj;
-    static mutex m_mtx;
+    static std::atomic<T *> m_pObj;
+    static std::mutex m_mtx;
 };
 
 template <class T>
-mutex Singleton<T>::m_mtx;
+std::mutex Singleton<T>::m_mtx;
 
 template <class T>
-atomic<T *> Singleton<T>::m_pObj(nullptr);
-//-----------------------------------------------------------
-
-class C
-{
-public:
-    C() :m_i(0)
-    {
-        this_thread::sleep_for(chrono::seconds(10));
-    }
-
-    C & operator=(int i)
-    {
-        m_i = i;
-        return *this;
-    }
-
-    operator int()
-    {
-        return m_i;
-    }
-private:
-    int m_i;
-};
-
-int main(int argc, char ** argv)
-{
-    auto somecode = []() {
-        auto * s = Singleton<C>::get();
-        *s = 17;
-        cout << *s;
-    };
-
-    {
-        vector<future<void>> vt;
-        for (size_t i = 0; i < 30; ++i)
-        {
-            vt.push_back(async(somecode));
-        }
-        for (auto & task : vt)
-        {
-            task.wait();
-        }
-    }
-
-    cout << "\ndone";
-    getchar();
-}
+std::atomic<T *> Singleton<T>::m_pObj(nullptr);
