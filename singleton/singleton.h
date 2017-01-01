@@ -35,7 +35,7 @@ public:
         auto pObj = m_pObj.load(memory_order_acquire);
         if (!pObj)
         {
-            lock_guard<mutex> lock(m_mtx);
+            std::lock_guard<std::mutex> lock(m_mtx);
             pObj = m_pObj.load(memory_order_relaxed);
             if (!pObj)
             {
