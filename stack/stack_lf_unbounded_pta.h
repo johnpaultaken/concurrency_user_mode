@@ -16,10 +16,10 @@ Problems identified:
 1. compare_exchange checks a pointer to node to make sure head has not changed. 
     But there is a remote chance the node could have been freed, reallocated, and placed 
     at head by other threads in the mean time.
-    This would be a problem for both push and pop.
-2. In a malloc implementation with per-thread arenas, if one thread frees buffer allocated
+    This would be a problem for pop because the new head could be incorrect.
+2. Even in a malloc implementation with per-thread arenas, if one thread frees node allocated
     by a different thread, does that cause a lock to happen ?
-    I saw a stackoverflow idea that each arena has a thread-specific garbage list.
+    I saw a stackoverflow posting that each arena has a thread-specific garbage list.
 */
 template<typename T>
 class stack_lf
