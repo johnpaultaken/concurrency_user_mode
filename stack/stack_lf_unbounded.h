@@ -84,15 +84,25 @@ private:
         T item;
     };
 
-    class node_list
+    class node_stack
     {
     public:
-        node_list() : m_top{nullptr,0}
+        node_stack() : m_top{nullptr,0}
         {
             if (!m_top.is_lock_free())
             {
                 cerr << "\nFalling back to lock based implementation of lockfree::stack.";
             }
+        }
+
+        void push(node * pNode)
+        {
+            // memory_order_relaxed due to node_stack dealing only node pointer, not node contents.
+            auto top = m_top.load(memory_order_relaxed);
+            do
+            {
+                pNode->pPrevious = top.pNode;
+            } while (!m_top.compare_exchange_weak(top, newtop, memory_order_relaxed, memory_order_relaxed));
         }
     private:
         struct head
