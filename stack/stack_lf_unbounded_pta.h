@@ -36,12 +36,16 @@ public:
     void push(const T & item)
     {
         auto newtop = new node(item);
+
         // memory_order_relaxed due to no following dereferencing of top.
         auto top = m_top.load(memory_order_relaxed);
+
         do
         {
             newtop->m_previous = top;
         } while (!m_top.compare_exchange_weak(top, newtop, memory_order_release, memory_order_relaxed));
+        // memory_order_release on success due to item need to be pop ready for another thread.
+        // memory_order_relaxed on failure due to no following dereferencing of top.
     }
 
     // Faster memory_order_consume can be used instead of memory_order_release in pop() due to dependent load.
