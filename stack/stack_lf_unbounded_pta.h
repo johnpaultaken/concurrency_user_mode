@@ -58,6 +58,7 @@ public:
         // memory_order_consume on failure due to following dependent load operation top.pNode->pPrevious.
         //      Note: Dependent load allows faster memory_order_consume to be used instead of memory_order_release.
         // memory_order_relaxed on success due to top actually read by the previous atomic operation, not the current one.
+        //      Note: However success cannot specify weaker ordering than failure until C++17.
         while (top && (!m_top.compare_exchange_weak(top, top->m_previous, memory_order_relaxed, memory_order_consume)));
 
         if (top)

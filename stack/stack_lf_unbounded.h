@@ -14,7 +14,7 @@ using std::memory_order_release;
 Notes:
 This implementation removes the restriction that you must use a per-thread arena allocator.
 This implementation also fixes the two problems identified in stack_lf_unbounded_pta.h
-Problem 1 is fixed by also adding a sequence number to atomic top variable incremented on push.
+Problem 1 is fixed by also adding a sequence number to atomic top variable which is incremented on push.
 Problem 2 is fixed by removing per-thread arena allocator restriction by using an internal free list for allocation.
 
 Other notes:
@@ -52,7 +52,7 @@ public:
         auto pNode = m_freeList.pop();
 
         // in-place copy construction
-        new (&pNode.item) T(item);
+        new (&(pNode->item)) T(item);
 
         m_occupiedList.push(pNode);
     }
@@ -87,7 +87,7 @@ private:
     class node_list
     {
     public:
-        node_list() : m_top{nullptr,0}
+        node_list() : m_top{nullptr}
         {
             if (!m_top.is_lock_free())
             {
@@ -131,6 +131,7 @@ private:
             // memory_order_consume on failure due to following dependent load operation top.pNode->pPrevious.
             //      Note: Dependent load allows faster memory_order_consume to be used instead of memory_order_release.
             // memory_order_relaxed on success due to top actually read by the previous atomic operation, not the current one.
+            //      Note: However success cannot specify weaker ordering than failure until C++17.
 
             return top.pNode;
         }
@@ -140,6 +141,15 @@ private:
         {
             node * pNode;
             unsigned int seqNum;
+
+            head(node * node): pNode(node), seqNum(0)
+            {
+            }
+
+            // for default initialization.
+            head()
+            {
+            }
         };
 
         std::atomic<head> m_top;
@@ -152,10 +162,10 @@ private:
     public:
         free_list(unsigned int initial_capacity)
         {
-            for (i = 0; i < initial_capacity; ++i)
+            for (unsigned int i = 0; i < initial_capacity; ++i)
             {
                 // There is no need to call constructor here. So just use malloc.
-                node_list.push(malloc(sizeof(node)));
+                node_list::push(static_cast<node *>(malloc(sizeof(node))));
             }
         }
 
@@ -176,7 +186,7 @@ private:
             while (!(ret = node_list::pop()))
             {
                 // There is no need to call constructor here. So just use malloc.
-                node_list::push(malloc(sizeof(node)));
+                node_list::push(static_cast<node *>(malloc(sizeof(node))));
             }
 
             return ret;
