@@ -33,6 +33,7 @@ public:
         }
     }
 
+    // Makes a copy of T internally. This allows proper object lifetime management. T can also be a smart pointer.
     void push(const T & item)
     {
         auto newtop = new node(item);
@@ -48,15 +49,16 @@ public:
         // memory_order_relaxed on failure due to no following dereferencing of top.
     }
 
-    // Faster memory_order_consume can be used instead of memory_order_release in pop() due to dependent load.
+    // Copies T on return. This allows stack management of its own internal storage.
     bool pop(T &item)
     {
         // memory_order_consume due to following operation top->m_previous.
         auto top = m_top.load(memory_order_consume);
 
-        // memory_order_consume on failure due to following operation top->m_previous.
-        // memory_order_consume on success due to following operation top->m_item.
-        while (top && (!m_top.compare_exchange_weak(top, top->m_previous, memory_order_consume, memory_order_consume)));
+        // memory_order_consume on failure due to following dependent load operation top.pNode->pPrevious.
+        //      Note: Dependent load allows faster memory_order_consume to be used instead of memory_order_release.
+        // memory_order_relaxed on success due to top actually read by the previous atomic operation, not the current one.
+        while (top && (!m_top.compare_exchange_weak(top, top->m_previous, memory_order_relaxed, memory_order_consume)));
 
         if (top)
         {

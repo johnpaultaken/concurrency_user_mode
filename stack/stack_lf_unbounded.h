@@ -14,8 +14,8 @@ using std::memory_order_release;
 Notes:
 This implementation removes the restriction that you must use a per-thread arena allocator.
 This implementation also fixes the two problems identified in stack_lf_unbounded_pta.h
-Problem 1 is fixed by also adding a sequence number to atomic top variable.
-Problem 2 is fixed by removing per-thread arena allocator restriction.
+Problem 1 is fixed by also adding a sequence number to atomic top variable incremented on push.
+Problem 2 is fixed by removing per-thread arena allocator restriction by using an internal free list for allocation.
 
 Other notes:
 1. Cannot use a preallocated array as storage for stack elements because
@@ -36,39 +36,39 @@ template<typename T>
 class stack
 {
 public:
-    stack_lf() : m_top(nullptr)
+    stack(unsigned int initial_capacity = 64): m_freeList(initial_capacity)
     {
-        if (!m_top.is_lock_free())
-        {
-            cerr << "\nFalling back to lock based implementation of stack_lf.";
-        }
     }
 
+    ~stack()
+    {
+        T tempObj;
+        while (pop(tempObj));
+    }
+
+    // Makes a copy of T internally. This allows proper object lifetime management. T can also be a smart pointer.
     void push(const T & item)
     {
-        auto newtop = new node(item);
-        // memory_order_relaxed due to no following dereferencing of top.
-        auto top = m_top.load(memory_order_relaxed);
-        do
-        {
-            newtop->m_previous = top;
-        } while (!m_top.compare_exchange_weak(top, newtop, memory_order_release, memory_order_relaxed));
+        auto pNode = m_freeList.pop();
+
+        // in-place copy construction
+        new (&pNode.item) T(item);
+
+        m_occupiedList.push(pNode);
     }
 
-    // Faster memory_order_consume can be used instead of memory_order_release in pop() due to dependent load.
+    // Copies T on return. This allows stack management of its own internal storage.
     bool pop(T &item)
     {
-        // memory_order_consume due to following operation top->m_previous.
-        auto top = m_top.load(memory_order_consume);
-
-        // memory_order_consume on failure due to following operation top->m_previous.
-        // memory_order_consume on success due to following operation top->m_item.
-        while (top && (!m_top.compare_exchange_weak(top, top->m_previous, memory_order_consume, memory_order_consume)));
-
-        if (top)
+        node * pNode;
+        if (pNode = m_occupiedList.pop())
         {
-            item = top->m_item;
-            delete top;
+            // copy to client.
+            item = pNode->item;
+
+            // destruct internal copy without freeing memory.
+            pNode->item.~T();
+
             return true;
         }
         else
@@ -84,10 +84,10 @@ private:
         T item;
     };
 
-    class node_stack
+    class node_list
     {
     public:
-        node_stack() : m_top{nullptr,0}
+        node_list() : m_top{nullptr,0}
         {
             if (!m_top.is_lock_free())
             {
@@ -97,13 +97,44 @@ private:
 
         void push(node * pNode)
         {
-            // memory_order_relaxed due to node_stack dealing only node pointer, not node contents.
+            // memory_order_relaxed due to no following dereferencing of top.
             auto top = m_top.load(memory_order_relaxed);
+
+            head newtop;
+            newtop.pNode = pNode;
+
             do
             {
                 pNode->pPrevious = top.pNode;
-            } while (!m_top.compare_exchange_weak(top, newtop, memory_order_relaxed, memory_order_relaxed));
+                newtop.seqNum = top.seqNum + 1;
+            } while (!m_top.compare_exchange_weak(top, newtop, memory_order_release, memory_order_relaxed));
+            // memory_order_release on success due to node need to be pop ready for another thread.
+            // memory_order_relaxed on failure due to no following dereferencing of top.
         }
+
+        node * pop()
+        {
+            // memory_order_consume due to following dependent load operation top.pNode->pPrevious.
+            auto top = m_top.load(memory_order_consume);
+
+            head newtop;
+            
+            do
+            {
+                if (top.pNode)
+                {
+                    newtop.pNode = top.pNode->pPrevious;
+                    newtop.seqNum = top.seqNum;
+                }
+            }
+            while (top.pNode && (!m_top.compare_exchange_weak(top, newtop, memory_order_relaxed, memory_order_consume)));
+            // memory_order_consume on failure due to following dependent load operation top.pNode->pPrevious.
+            //      Note: Dependent load allows faster memory_order_consume to be used instead of memory_order_release.
+            // memory_order_relaxed on success due to top actually read by the previous atomic operation, not the current one.
+
+            return top.pNode;
+        }
+
     private:
         struct head
         {
@@ -114,6 +145,46 @@ private:
         std::atomic<head> m_top;
     };
 
+    // This class makes sure pop() always returns a node.
+    // If node_list is empty on pop(), node is allocated and inserted into the list.
+    class free_list: public node_list
+    {
+    public:
+        free_list(unsigned int initial_capacity)
+        {
+            for (i = 0; i < initial_capacity; ++i)
+            {
+                // There is no need to call constructor here. So just use malloc.
+                node_list.push(malloc(sizeof(node)));
+            }
+        }
+
+        ~free_list()
+        {
+            node * pNode = nullptr;
+
+            while (pNode = node_list::pop())
+            {
+                free(pNode);
+            }
+        }
+
+        node * pop()
+        {
+            node * ret = nullptr;
+
+            while (!(ret = node_list::pop()))
+            {
+                // There is no need to call constructor here. So just use malloc.
+                node_list::push(malloc(sizeof(node)));
+            }
+
+            return ret;
+        }
+    };
+
+    free_list m_freeList;
+    node_list m_occupiedList;
 };
 
 }
