@@ -10,6 +10,11 @@ using std::memory_order_release;
 
 // Lock free stack implementation in C++11.
 // Stack can grow in size unbounded.
+
+// To build using gcc need the following options
+//      -std=c++11 -pthread -march=native
+//      arch option is needed because not all architectures support 16 byte atomic.
+
 /*
 Notes:
 This implementation removes the restriction that you must use a per-thread arena allocator.

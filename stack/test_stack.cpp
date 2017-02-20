@@ -1,3 +1,7 @@
+//
+// use the following command line to build using gcc
+// g++ -std=c++11 -pthread -march=native test_stack.cpp
+//
 
 #include "stack.h"
 
