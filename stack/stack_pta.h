@@ -21,16 +21,25 @@ Problems identified:
     by a different thread, does that cause a lock to happen ?
     I saw a stackoverflow posting that each arena has a thread-specific garbage list.
 */
+namespace lockfree
+{
+
 template<typename T>
-class stack_lf
+class stack_pta
 {
 public:
-    stack_lf() : m_top(nullptr)
+    stack_pta() : m_top(nullptr)
     {
         if (!m_top.is_lock_free())
         {
-            cerr << "\nFalling back to lock based implementation of stack_lf.";
+            cerr << "\nFalling back to lock based implementation of stack_pta.";
         }
+    }
+
+    ~stack_pta()
+    {
+        T tempObj;
+        while (pop(tempObj));
     }
 
     // Makes a copy of T internally. This allows proper object lifetime management. T can also be a smart pointer.
@@ -85,3 +94,5 @@ private:
 
     std::atomic<node *> m_top;
 };
+
+}

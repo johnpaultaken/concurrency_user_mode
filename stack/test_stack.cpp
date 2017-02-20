@@ -1,14 +1,15 @@
 
-#include "stack_lf_unbounded_pta.h"
+#include "stack.h"
 
 #include <iostream>
 #include <future>
 #include <vector>
 
 using namespace std;
+using namespace lockfree;
 
 template<typename T>
-void print(stack_lf<T> & s)
+void print(stack<T> & s)
 {
     T i{};
     while (s.pop(i))
@@ -19,13 +20,13 @@ void print(stack_lf<T> & s)
 
 int main(int argc, char ** argv)
 {
-    stack_lf<int> slf;
-    stack_lf<int> result;
+    stack<int> slf;
+    stack<int> result;
 
     {
         vector<future<void>> vf;
 
-        for (int c = 0; c < 10; c+=3)
+        for (int c = 0; c <= 9; c+=3)
         {
             vf.emplace_back(async([&slf, c]() {slf.push(c+1); }));
             vf.emplace_back(async([&slf, c]() {slf.push(c+2); }));
@@ -46,6 +47,8 @@ int main(int argc, char ** argv)
     {
         result.push(i);
     }
+
+    // expected output is all numbers from 1 to 12 in any order.
     print(result);
 
     cout << "\ndone" << flush;
