@@ -14,14 +14,13 @@ using std::memory_order_release;
 
 // To build using gcc need the following options
 //      -std=c++11 -pthread -march=native
-//      arch option is needed because not all architectures support 16 byte atomic.
+//      arch option is needed because older architectures don't support 16 byte atomic.
 
 /*
 Notes:
-This implementation removes the restriction that you must use a per-thread arena allocator.
-This implementation also fixes the two problems identified in queue_lf_unbounded_pta.h
-Problem 1 is fixed by also adding a sequence number to atomic top variable which is incremented on push.
-Problem 2 is fixed by removing per-thread arena allocator restriction by using an internal free list for allocation.
+This implementation uses its own free list to avoid any locking by the memory allocator you happen to use.
+This implementation adds a sequence number to the atomic list head when the list is used for popping.
+    The sequence number is incremented on push. This makes the list changed check stronger.
 
 Other notes:
 1. Cannot use a preallocated array as storage for queue elements because
@@ -69,8 +68,9 @@ public:
         node * pNode = nullptr;
         if (!(pNode = m_popList.pop()))
         {
-            // Acquired refillLock. 
-            // Note: Using spinlock to avoid any system call latency because expected spin is shorter than system call latency.
+            // Acquire refillLock. 
+            // Note:  This is not a system call lock. This is a 'lock-free' compare and swap operation.
+            //             Using spinlock avoids any system call latency because expected spin is shorter than system call latency.
             while (m_refillLock.test_and_set(memory_order_acquire));
 
             // A refill might have happened by the time refillLock was acquired.
@@ -124,15 +124,17 @@ private:
     {
         node * next = nullptr;
         auto current = pNode;
-        while (auto previous = current->pPrevious)
+
+        do
         {
+            auto previous = current->pPrevious;
             current->pPrevious = next;
 
             next = current;
             current = previous;
-        }
+        } while (current);
 
-        return current;
+        return next;
     }
 
     //
@@ -193,7 +195,7 @@ private:
             }
 
             head newtop;
-            newtop.pNode = nullptr;
+            newtop.pNode = pNode;
             newtop.seqNum = top.seqNum + 1;
 
             // memory_order_release on success due to node need to be pop ready for another thread.
@@ -223,6 +225,8 @@ private:
             //      Note: Dependent load allows faster memory_order_consume to be used instead of memory_order_release.
             // memory_order_relaxed on success due to top actually read by the previous atomic operation, not the current one.
             //      Note: However success cannot specify weaker ordering than failure until C++17.
+
+            return top.pNode;
         }
 
     private:
@@ -318,10 +322,12 @@ private:
     };
 
     //
-    // A list of nodes that are free to be used.
+    // A list of free nodes available to be used during push.
+    // Popped nodes are recycled to this list to be used again for push, 
+    // thus avoiding the memory allocator until a capacity increase.
     //
-    // Note: This node_list wrapper class makes sure pop() always returns a free node.
-    // If node_list is empty on pop(), node is allocated and inserted into the list.
+    // Note: This wrapper class on node_list makes sure pop() always returns a free node
+    //  by doing memory allocation if node_list goes empty.
     class free_list: public node_list
     {
     public:
