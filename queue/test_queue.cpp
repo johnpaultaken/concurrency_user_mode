@@ -9,9 +9,12 @@
 #include <future>
 #include <vector>
 #include <set>
+#include <random>
 
 using namespace std;
 using namespace lockfree;
+
+//#define PRINT_OUTPUT
 
 void testcase_parallelism()
 {
@@ -22,15 +25,20 @@ void testcase_parallelism()
 
     {
         vector<future<void>> vf;
+        auto random_yield = [](){
+            random_device r;
+            unsigned int times = r() % parallelism;
+            for(unsigned int c=0; c<times; ++c) this_thread::yield();
+        };
 
         for (int c = 0; (c + 3) <= parallelism; c += 3)
         {
-            vf.emplace_back(async([&qlf, c]() {qlf.push(c + 1); }));
-            vf.emplace_back(async([&qlf, c]() {qlf.push(c + 2); }));
-            vf.emplace_back(async([&qlf, c]() {qlf.push(c + 3); }));
-            vf.emplace_back(async([&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
-            vf.emplace_back(async([&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
-            vf.emplace_back(async([&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
+            vf.emplace_back(async(std::launch::async, [&qlf, c, random_yield]() {random_yield(); qlf.push(c + 1); }));
+            vf.emplace_back(async(std::launch::async, [&qlf, c, random_yield]() {random_yield(); qlf.push(c + 2); }));
+            vf.emplace_back(async(std::launch::async, [&qlf, c, random_yield]() {random_yield(); qlf.push(c + 3); }));
+            vf.emplace_back(async(std::launch::async, [&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
+            vf.emplace_back(async(std::launch::async, [&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
+            vf.emplace_back(async(std::launch::async, [&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
         }
 
         for (auto & task : vf)
