@@ -7,6 +7,7 @@
 using std::cerr;
 using std::memory_order_relaxed;
 using std::memory_order_consume;
+using std::memory_order_acquire;
 using std::memory_order_release;
 
 // Lock free queue implementation in C++11.
