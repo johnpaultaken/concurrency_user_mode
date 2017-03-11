@@ -25,7 +25,7 @@ void testcase_parallelism()
 
     {
         vector<future<void>> vf;
-        auto random_yield = [](){
+        auto random_yield = [parallelism](){
             random_device r;
             unsigned int times = r() % parallelism;
             for(unsigned int c=0; c<times; ++c) this_thread::yield();
