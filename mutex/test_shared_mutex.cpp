@@ -1,6 +1,13 @@
 //
 // use the following command line to build using gcc
-// g++ -std=c++11 -pthread -march=native test_queue.cpp
+// g++ -std=c++14 -pthread test_shared_mutex.cpp
+//
+// Note: C++14 is needed for compiling test only, not shared_mutex.h
+// It is because we want to test our shared_mutex is compliant with the wrapper 'shared_lock' from C++14
+//
+// This test shows how to easily convert your single thread use only container
+// into a multi-thread safe container
+// using the lockfree shared_mutex from this repo.
 //
 
 #include "shared_mutex.h"
@@ -20,6 +27,7 @@ using std::shared_lock;
 #include <vector>
 #include <set>
 #include <random>
+#include <stdexcept>
 
 using std::cout;
 using std::pair;
@@ -27,6 +35,8 @@ using std::make_pair;
 using std::vector;
 using std::logic_error;
 using std::flush;
+using std::future;
+using std::random_device;
 
 void testcase_sanity()
 {
@@ -43,7 +53,7 @@ void testcase_sanity()
     sm.unlock();
 
     cout << "\n success";
-    cout << " test sanity: single threaded shared and exclusive locking.";
+    cout << " : sanity test - single threaded shared and exclusive locking." << std::flush;
 }
 
 
@@ -117,7 +127,7 @@ public:
     pair<unsigned int, unsigned int> peek_back()
     {
         auto currentlast = &head;
-        unsigned int numnodes = 1;
+        unsigned int numnodes = 0;
         while (currentlast->next)
         {
             currentlast = currentlast->next;
@@ -149,7 +159,7 @@ void test_linked_list_single_threaded()
 
     static const unsigned int signature = linked_list::signature;
 
-    vector<pair<unsigned int, unsigned int>> expected_st{ { signature,1 },{ signature,2 },{ signature,1 },{ signature,1 },{ signature,4 },{ signature,2 } };
+    vector<pair<unsigned int, unsigned int>> expected_st{ { signature,0 },{ signature,1 },{ signature,0 },{ signature,0 },{ signature,3 },{ signature,1 } };
     vector<pair<unsigned int, unsigned int>> actual_st;
 
     actual_st.push_back( list_st.peek_back() );
@@ -213,70 +223,89 @@ private:
 
 void testcase_container()
 {
-    test_linked_list_single_threaded<linked_list_multi_threaded>();
+    try
+    {
+        test_linked_list_single_threaded<linked_list_multi_threaded>();
+        cout << "\n success";
+    }
+    catch (std::exception & e)
+    {
+        cout << "\n FAIL";
+    }
+
+    cout << " : single threaded test - multi thread safe container." << std::flush;
 }
 
 //#define PRINT_OUTPUT
 
 void testcase_container_parallelism()
 {
-    queue<int> qlf;
-    queue<int> result;
+    linked_list_multi_threaded mtl;
 
-    const int  = 999;
-    static const unsigned int signature = linked_list::parallelism;
-    static const unsigned int signature = linked_list::signature;
+    static const unsigned int maxyield = 6;
+
+    bool failed = false;
 
     {
         vector<future<void>> vf;
-        auto random_yield = [parallelism](){
+
+        auto random_yield = [](){
             random_device r;
-            unsigned int times = r() % parallelism;
-            for(unsigned int c=0; c<times; ++c) this_thread::yield();
+            unsigned int times = r() % maxyield;
+            for(unsigned int c=0; c<times; ++c) std::this_thread::yield();
         };
 
-        for (int c = 0; (c + 3) <= parallelism; c += 3)
+        auto push = [&mtl, random_yield]() {
+            random_yield();
+            auto pr = mtl.peek_back();
+            if (pr.first != mtl.signature) throw std::logic_error("umatched signature");
+            if (pr.second > mtl.parallelism) throw std::logic_error("unexpected number of nodes");
+            mtl.push_back();
+        };
+
+        auto pop = [&mtl, random_yield]() {
+            random_yield();
+            auto pr = mtl.peek_back();
+            if (pr.first != mtl.signature) throw std::logic_error("umatched signature");
+            if (pr.second > mtl.parallelism) throw std::logic_error("unexpected number of nodes");
+            mtl.pop_back();
+        };
+
+        auto peek = [&mtl, random_yield]() {
+            random_yield();
+            auto pr = mtl.peek_back();
+            if (pr.first != mtl.signature) throw std::logic_error("umatched signature");
+            if (pr.second > mtl.parallelism) throw std::logic_error("unexpected number of nodes");
+        };
+
+        for (int c = 0; c < 2*mtl.parallelism; ++c)
         {
-            vf.emplace_back(async(std::launch::async, [&qlf, c, random_yield]() {random_yield(); qlf.push(c + 1); }));
-            vf.emplace_back(async(std::launch::async, [&qlf, c, random_yield]() {random_yield(); qlf.push(c + 2); }));
-            vf.emplace_back(async(std::launch::async, [&qlf, c, random_yield]() {random_yield(); qlf.push(c + 3); }));
-            vf.emplace_back(async(std::launch::async, [&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
-            vf.emplace_back(async(std::launch::async, [&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
-            vf.emplace_back(async(std::launch::async, [&qlf, &result]() {int ip = 0; if (qlf.pop(ip)) result.push(ip); }));
+            // Much larger reads compared to writes.
+            vf.emplace_back(async(std::launch::async, peek));
+            vf.emplace_back(async(std::launch::async, peek));
+            vf.emplace_back(async(std::launch::async, peek));
+            vf.emplace_back(async(std::launch::async, push));
+            vf.emplace_back(async(std::launch::async, push));
+            vf.emplace_back(async(std::launch::async, pop));
         }
 
-        for (auto & task : vf)
+        try
         {
-            task.wait();
+            for (auto & task : vf)
+            {
+                task.get();
+            }
         }
-    }
-
-    int i = 0;
-    while (qlf.pop(i))
-    {
-        result.push(i);
-    }
-
-    cout << ' ' << '\n';
-    set<int> output;
-    while (result.pop(i))
-    {
-        output.insert(i);
+        catch (std::exception & e)
+        {
+            failed = true;
 #ifdef PRINT_OUTPUT
-        cout << ' ' << i;
+            std::cerr << "\n" << e.what();
 #endif
-    }
-    cout << ' ' << '\n';
-
-    set<int> expected;
-    for (int c = 0; (c + 3) <= parallelism; c += 3)
-    {
-        expected.insert(c + 1);
-        expected.insert(c + 2);
-        expected.insert(c + 3);
+        }
     }
 
-    if (output != expected)
+    if (failed)
     {
         cout << "\n FAIL";
     }
@@ -284,7 +313,7 @@ void testcase_container_parallelism()
     {
         cout << "\n success";
     }
-    cout << " : test container parallelism.";
+    cout << " : parallelism test - multi thread safe container." << std::flush;
 }
 
 int main(int argc, char ** argv)
@@ -293,8 +322,8 @@ int main(int argc, char ** argv)
     testcase_container();
     testcase_container_parallelism();
 
-    cout << "\ndone" << flush;
-    getchar();
+    cout << "\ndone\n" << flush;
+    //getchar();
     return 0;
 }
 
