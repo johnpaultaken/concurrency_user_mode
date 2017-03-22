@@ -5,18 +5,32 @@
 
 #include "shared_mutex.h"
 
+// This is used for the std::unique_lock wrapper only;
+// which is used to wrap our lockfree::shared_mutex.
+#include <mutex>
+using std::unique_lock;
+
+// This is used for the std::shared_lock wrapper only;
+// which is used to wrap our lockfree::shared_mutex.
+#include <shared_mutex>
+using std::shared_lock;
+
 #include <iostream>
 #include <future>
 #include <vector>
 #include <set>
 #include <random>
 
-using namespace std;
-using namespace lockfree;
+using std::cout;
+using std::pair;
+using std::make_pair;
+using std::vector;
+using std::logic_error;
+using std::flush;
 
 void testcase_sanity()
 {
-    shared_mutex sm;
+    lockfree::shared_mutex sm;
 
     sm.lock_shared();
     sm.lock_shared();
@@ -32,107 +46,112 @@ void testcase_sanity()
     cout << " test sanity: single threaded shared and exclusive locking.";
 }
 
-void testcase_parallelism()
+
+class linked_list_single_threaded
 {
-    const unsigned int parallelism = 999;
-    const unsigned int signature = 0x12345678;
-    const unsigned int badcode = 0xbadc0de;
+public:
+    static const unsigned int parallelism = 999;
+    static const unsigned int signature = 0x12345678;
+    static const unsigned int badcode = 0xbadc0de;
 
-    class linked_list_single_threaded
+    linked_list_single_threaded()
     {
-    public:
-        linked_list_single_threaded()
+        head.element = signature;
+        head.next = nullptr;
+
+        badnode.element = badcode;
+        badnode.next = &badnode;    // to cause infinite looping.
+
+        for (unsigned int i = 0; i < parallelism; ++i)
         {
-            head.element = signature;
-            head.next = nullptr;
+            freelist[i].allocated = false;
+            freelist[i].element = badcode;
+            freelist[i].next = &badnode;
+        }
+    }
 
-            badnode.element = badcode;
-            badnode.next = &badnode;    // to cause infinite looping.
-
-            for (unsigned int i = 0; i < parallelism; ++i)
+    void pop_back()
+    {
+        if (head.next)
+        {
+            auto newlast = &head;
+            while (newlast->next->next)
             {
-                freelist[i].allocated = false;
-                freelist[i].element = badcode;
-                freelist[i].next = &badnode;
+                newlast = newlast->next;
+            }
+            newlast->next->allocated = false;
+            newlast->next->element = badcode;
+            newlast->next->next = &badnode;
+
+            newlast->next = nullptr;
+        }
+    }
+
+    void push_back()
+    {
+        node * newnode = nullptr;
+        for (unsigned int i = 0; i < parallelism; ++i)
+        {
+            if (! freelist[i].allocated)
+            {
+                newnode = &freelist[i];
+                freelist[i].allocated = true;
+                freelist[i].element = signature;
+                freelist[i].next = nullptr;
+
+                break;
             }
         }
 
-        void pop_back()
-        {
-            if (head.next)
-            {
-                auto newlast = &head;
-                while (newlast->next->next)
-                {
-                    newlast = newlast->next;
-                }
-                newlast->next->allocated = false;
-                newlast->next->element = badcode;
-                newlast->next->next = &badnode;
-
-                newlast->next = nullptr;
-            }
-        }
-
-        void push_back()
-        {
-            node * newnode = nullptr;
-            for (unsigned int i = 0; i < parallelism; ++i)
-            {
-                if (! freelist[i].allocated)
-                {
-                    newnode = &freelist[i];
-                    freelist[i].allocated = true;
-                    freelist[i].element = signature;
-                    freelist[i].next = nullptr;
-
-                    break;
-                }
-            }
-
-            if (newnode)
-            {
-                auto currentlast = &head;
-                while (currentlast->next)
-                {
-                    currentlast = currentlast->next;
-                }
-                currentlast->next = newnode;
-            }
-        }
-
-        pair<unsigned int, unsigned int> peek_back()
+        if (newnode)
         {
             auto currentlast = &head;
-            unsigned int numnodes = 1;
             while (currentlast->next)
             {
                 currentlast = currentlast->next;
-                numnodes++;
             }
-            return make_pair(currentlast->element, numnodes);
+            currentlast->next = newnode;
         }
+    }
 
-    private:
-        struct node
+    pair<unsigned int, unsigned int> peek_back()
+    {
+        auto currentlast = &head;
+        unsigned int numnodes = 1;
+        while (currentlast->next)
         {
-            bool allocated;
-            unsigned int element;
-            node * next;
-        };
+            currentlast = currentlast->next;
+            numnodes++;
+        }
+        return make_pair(currentlast->element, numnodes);
+    }
 
-        // nodes pre allocated to avoid locks in allocator.
-        node freelist[parallelism];
-
-        node badnode;
-
-        node head;
+private:
+    struct node
+    {
+        bool allocated;
+        unsigned int element;
+        node * next;
     };
 
-    linked_list_single_threaded list_st;
+    // nodes pre allocated to avoid locks in allocator.
+    node freelist[parallelism];
+
+    node badnode;
+
+    node head;
+};
+
+template<typename linked_list>
+void test_linked_list_single_threaded()
+{
+    linked_list list_st;
+
+    static const unsigned int signature = linked_list::signature;
 
     vector<pair<unsigned int, unsigned int>> expected_st{ { signature,1 },{ signature,2 },{ signature,1 },{ signature,1 },{ signature,4 },{ signature,2 } };
     vector<pair<unsigned int, unsigned int>> actual_st;
+
     actual_st.push_back( list_st.peek_back() );
 
     list_st.push_back();
@@ -155,45 +174,58 @@ void testcase_parallelism()
 
     if (actual_st != expected_st)
     {
-        throw logic_error("bad test code -> testcase_parallelism::linked_list_single_threaded");
+        throw logic_error("bad test code -> test_linked_list_single_threaded");
     }
-
-
-    /*
-    if (actual_st != expected_st)
-    {
-        cout << "\n FAIL";
-    }
-    else
-    {
-        cout << "\n success";
-    }
-    cout << " test parallelism: single threaded list test";
-    */
 }
 
-int main(int argc, char ** argv)
+//
+// Convert the single threaded list (ie not multi-thread safe)
+// to a multi-thread safe list
+// using the lockfree shared_mutex.
+//
+class linked_list_multi_threaded: public linked_list_single_threaded
 {
-    testcase_sanity();
-    testcase_parallelism();
+public:
+    void pop_back()
+    {
+        unique_lock<lockfree::shared_mutex> ul(m_sm);
 
-    cout << "\ndone" << flush;
-    getchar();
-    return 0;
+        return linked_list_single_threaded::pop_back();
+    }
+
+    void push_back()
+    {
+        unique_lock<lockfree::shared_mutex> ul(m_sm);
+
+        return linked_list_single_threaded::push_back();
+    }
+
+    pair<unsigned int, unsigned int> peek_back()
+    {
+        shared_lock<lockfree::shared_mutex> sl(m_sm);
+
+        return linked_list_single_threaded::peek_back();
+    }
+
+private:
+    lockfree::shared_mutex m_sm;
+};
+
+void testcase_container()
+{
+    test_linked_list_single_threaded<linked_list_multi_threaded>();
 }
-
-
-#ifdef JUNK
 
 //#define PRINT_OUTPUT
 
-
-void testcase_parallelism()
+void testcase_container_parallelism()
 {
     queue<int> qlf;
     queue<int> result;
 
-    const int parallelism = 999;
+    const int  = 999;
+    static const unsigned int signature = linked_list::parallelism;
+    static const unsigned int signature = linked_list::signature;
 
     {
         vector<future<void>> vf;
@@ -252,102 +284,18 @@ void testcase_parallelism()
     {
         cout << "\n success";
     }
-    cout << " test parallelism: push pop in parallel";
-}
-
-void testcase_queueSemantic_pushpop()
-{
-    vector<int> input{ 1,2,3,4,5 };
-    vector<int> output;
-
-    vector<int> expected{ 1,2,3,4,5 };
-
-    queue<int> q;
-    for (auto v : input)
-    {
-        q.push(v);
-    }
-
-    int i = 0;
-    while (q.pop(i))
-    {
-        output.push_back(i);
-    }
-
-    if (output != expected)
-    {
-        cout << "\n FAIL";
-    }
-    else
-    {
-        cout << "\n success";
-    }
-    cout << " test queueSemantic: push pop sequence";
-
-#ifdef PRINT_OUTPUT
-    for (auto v : output)
-    {
-        cout << ' ' << v;
-    }
-#endif
-}
-
-void testcase_queueSemantic_partialpoppush()
-{
-    vector<int> input1{ 1,2,3,4,5 };
-    vector<int> input2{ 6,7,8 };
-    vector<int> output;
-
-    vector<int> expected{ 4,5,6,7,8 };
-
-    queue<int> q;
-    for (auto v : input1)
-    {
-        q.push(v);
-    }
-    int i = 0;
-    for (int c = 0; c < 3; ++c)
-    {
-        q.pop(i);
-    }
-    for (auto v : input2)
-    {
-        q.push(v);
-    }
-
-    while (q.pop(i))
-    {
-        output.push_back(i);
-    }
-
-    if (output != expected)
-    {
-        cout << "\n FAIL";
-    }
-    else
-    {
-        cout << "\n success";
-    }
-    cout << " test queueSemantic: partial pop push sequence";
-
-#ifdef PRINT_OUTPUT
-    for (auto v : output)
-    {
-        cout << ' ' << v;
-    }
-#endif
+    cout << " : test container parallelism.";
 }
 
 int main(int argc, char ** argv)
 {
-    testcase_queueSemantic_pushpop();
-    testcase_queueSemantic_partialpoppush();
-
-    testcase_parallelism();
+    testcase_sanity();
+    testcase_container();
+    testcase_container_parallelism();
 
     cout << "\ndone" << flush;
     getchar();
     return 0;
 }
 
-#endif //JUNK
+
