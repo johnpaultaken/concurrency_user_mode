@@ -88,6 +88,7 @@ public:
             while (newlast->next->next)
             {
                 newlast = newlast->next;
+                checkNodeForMemoryCorruption(newlast);
             }
             newlast->next->allocated = false;
             newlast->next->element = badcode;
@@ -119,6 +120,7 @@ public:
             while (currentlast->next)
             {
                 currentlast = currentlast->next;
+                checkNodeForMemoryCorruption(currentlast);
             }
             currentlast->next = newnode;
         }
@@ -131,18 +133,33 @@ public:
         while (currentlast->next)
         {
             currentlast = currentlast->next;
+            checkNodeForMemoryCorruption(currentlast);
             numnodes++;
         }
         return make_pair(currentlast->element, numnodes);
     }
 
 private:
+
     struct node
     {
         bool allocated;
         unsigned int element;
         node * next;
     };
+
+    void checkNodeForMemoryCorruption(node * pNode)
+    {
+        if (pNode == (&badnode))
+        {
+            throw std::logic_error("Likely thread race data corruption. Bad node found!");
+        }
+
+        if (pNode->element == badcode)
+        {
+            throw std::logic_error("Likely thread race data corruption. Bad code found!");
+        }
+    }
 
     // nodes pre allocated to avoid locks in allocator.
     node freelist[parallelism];
