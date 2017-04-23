@@ -38,6 +38,8 @@ using std::flush;
 using std::future;
 using std::random_device;
 
+//#define PRINT_TRACE
+
 void testcase_sanity()
 {
     lockfree::shared_mutex sm;
@@ -60,23 +62,23 @@ void testcase_sanity()
 class linked_list_single_threaded
 {
 public:
-    static const unsigned int parallelism = 999;
-    static const unsigned int signature = 0x12345678;
-    static const unsigned int badcode = 0xbadc0de;
+    static const unsigned int capacity = 999;
+    static const unsigned int signature_allocated = 0x12345678;
+    static const unsigned int signature_freed = 0xbadc0de;
 
     linked_list_single_threaded()
     {
-        head.element = signature;
+        head.element = signature_allocated;
         head.next = nullptr;
 
-        badnode.element = badcode;
-        badnode.next = &badnode;    // to cause infinite looping.
+        node_deadend.element = signature_freed;
+        node_deadend.next = &node_deadend;    // to cause infinite looping.
 
-        for (unsigned int i = 0; i < parallelism; ++i)
+        for (unsigned int i = 0; i < capacity; ++i)
         {
             freelist[i].allocated = false;
-            freelist[i].element = badcode;
-            freelist[i].next = &badnode;
+            freelist[i].element = signature_freed;
+            freelist[i].next = &node_deadend;
         }
     }
 
@@ -85,14 +87,16 @@ public:
         if (head.next)
         {
             auto newlast = &head;
+            unsigned int numnodes = 0;
             while (newlast->next->next)
             {
                 newlast = newlast->next;
-                checkNodeForMemoryCorruption(newlast);
+                numnodes++;
+                verifyAllocatedNode(newlast, numnodes);
             }
             newlast->next->allocated = false;
-            newlast->next->element = badcode;
-            newlast->next->next = &badnode;
+            newlast->next->element = signature_freed;
+            newlast->next->next = &node_deadend;
 
             newlast->next = nullptr;
         }
@@ -101,13 +105,13 @@ public:
     void push_back()
     {
         node * newnode = nullptr;
-        for (unsigned int i = 0; i < parallelism; ++i)
+        for (unsigned int i = 0; i < capacity; ++i)
         {
             if (! freelist[i].allocated)
             {
                 newnode = &freelist[i];
                 freelist[i].allocated = true;
-                freelist[i].element = signature;
+                freelist[i].element = signature_allocated;
                 freelist[i].next = nullptr;
 
                 break;
@@ -117,10 +121,12 @@ public:
         if (newnode)
         {
             auto currentlast = &head;
+            unsigned int numnodes = 0;
             while (currentlast->next)
             {
                 currentlast = currentlast->next;
-                checkNodeForMemoryCorruption(currentlast);
+                numnodes++;
+                verifyAllocatedNode(currentlast, numnodes);
             }
             currentlast->next = newnode;
         }
@@ -133,8 +139,8 @@ public:
         while (currentlast->next)
         {
             currentlast = currentlast->next;
-            checkNodeForMemoryCorruption(currentlast);
             numnodes++;
+            verifyAllocatedNode(currentlast, numnodes);
         }
         return make_pair(currentlast->element, numnodes);
     }
@@ -148,23 +154,28 @@ private:
         node * next;
     };
 
-    void checkNodeForMemoryCorruption(node * pNode)
+    void verifyAllocatedNode(node * pNode, unsigned int seqNum)
     {
-        if (pNode == (&badnode))
+        if (seqNum > capacity)
         {
-            throw std::logic_error("Likely thread race data corruption. Bad node found!");
+            throw std::logic_error("Capacity exceeded. Likely thread race data corruption.");
         }
 
-        if (pNode->element == badcode)
+        if (pNode->element != signature_allocated)
         {
-            throw std::logic_error("Likely thread race data corruption. Bad code found!");
+            throw std::logic_error("Bad signature in allocated node. Likely thread race data corruption.");
+        }
+
+        if (pNode == (&node_deadend))
+        {
+            throw std::logic_error("Reached dead end. Likely thread race data corruption.");
         }
     }
 
     // nodes pre allocated to avoid locks in allocator.
-    node freelist[parallelism];
+    node freelist[capacity];
 
-    node badnode;
+    node node_deadend;
 
     node head;
 };
@@ -174,9 +185,9 @@ void test_linked_list_single_threaded()
 {
     linked_list list_st;
 
-    static const unsigned int signature = linked_list::signature;
+    static const unsigned int signature_allocated = linked_list::signature_allocated;
 
-    vector<pair<unsigned int, unsigned int>> expected_st{ { signature,0 },{ signature,1 },{ signature,0 },{ signature,0 },{ signature,3 },{ signature,1 } };
+    vector<pair<unsigned int, unsigned int>> expected_st{ { signature_allocated,0 },{ signature_allocated,1 },{ signature_allocated,0 },{ signature_allocated,0 },{ signature_allocated,3 },{ signature_allocated,1 } };
     vector<pair<unsigned int, unsigned int>> actual_st;
 
     actual_st.push_back( list_st.peek_back() );
@@ -253,9 +264,7 @@ void testcase_container()
     cout << " : single threaded test - multi thread safe container." << std::flush;
 }
 
-//#define PRINT_OUTPUT
-
-void testcase_container_parallelism()
+bool testcase_container_parallelism()
 {
     linked_list_multi_threaded mtl;
 
@@ -274,35 +283,29 @@ void testcase_container_parallelism()
 
         auto push = [&mtl, random_yield]() {
             random_yield();
-            auto pr = mtl.peek_back();
-            if (pr.first != mtl.signature) throw std::logic_error("umatched signature");
-            if (pr.second > mtl.parallelism) throw std::logic_error("unexpected number of nodes");
             mtl.push_back();
         };
 
         auto pop = [&mtl, random_yield]() {
             random_yield();
-            auto pr = mtl.peek_back();
-            if (pr.first != mtl.signature) throw std::logic_error("umatched signature");
-            if (pr.second > mtl.parallelism) throw std::logic_error("unexpected number of nodes");
             mtl.pop_back();
         };
 
         auto peek = [&mtl, random_yield]() {
             random_yield();
             auto pr = mtl.peek_back();
-            if (pr.first != mtl.signature) throw std::logic_error("umatched signature");
-            if (pr.second > mtl.parallelism) throw std::logic_error("unexpected number of nodes");
+            if (pr.first != mtl.signature_allocated) throw std::logic_error("umatched signature");
+            if (pr.second > mtl.capacity) throw std::logic_error("unexpected number of nodes");
         };
 
-        for (int c = 0; c < 2*mtl.parallelism; ++c)
+        for (int c = 0; c < 2*mtl.capacity; ++c)
         {
             // Much larger reads compared to writes.
             vf.emplace_back(async(std::launch::async, peek));
-            vf.emplace_back(async(std::launch::async, peek));
+            vf.emplace_back(async(std::launch::async, push));
             vf.emplace_back(async(std::launch::async, peek));
             vf.emplace_back(async(std::launch::async, push));
-            vf.emplace_back(async(std::launch::async, push));
+            vf.emplace_back(async(std::launch::async, peek));
             vf.emplace_back(async(std::launch::async, pop));
         }
 
@@ -316,7 +319,7 @@ void testcase_container_parallelism()
         catch (std::exception & e)
         {
             failed = true;
-#ifdef PRINT_OUTPUT
+#ifdef PRINT_TRACE
             std::cerr << "\n" << e.what();
 #endif
         }
@@ -331,12 +334,15 @@ void testcase_container_parallelism()
         cout << "\n success";
     }
     cout << " : parallelism test - multi thread safe container." << std::flush;
+
+    return (!failed);
 }
 
 int main(int argc, char ** argv)
 {
     testcase_sanity();
     testcase_container();
+
     testcase_container_parallelism();
 
     cout << "\ndone\n" << flush;
