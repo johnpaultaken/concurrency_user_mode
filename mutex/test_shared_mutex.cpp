@@ -28,6 +28,8 @@ using std::shared_lock;
 #include <set>
 #include <random>
 #include <stdexcept>
+#include <chrono>
+#include <iomanip>
 
 using std::cout;
 using std::pair;
@@ -37,25 +39,41 @@ using std::logic_error;
 using std::flush;
 using std::future;
 using std::random_device;
+namespace chrono = std::chrono;
 
-//#define PRINT_TRACE
+#define PRINT_TRACE
+#define STRESS_TEST
 
-void testcase_sanity()
+bool testcase_sanity()
 {
-    lockfree::shared_mutex sm;
+    bool bResult = false;
+    try
+    {
+        lockfree::shared_mutex sm;
 
-    sm.lock_shared();
-    sm.lock_shared();
-    sm.unlock_shared();
-    sm.lock_shared();
-    sm.unlock_shared();
-    sm.unlock_shared();
+        sm.lock_shared();
+        sm.lock_shared();
+        sm.unlock_shared();
+        sm.lock_shared();
+        sm.unlock_shared();
+        sm.unlock_shared();
 
-    sm.lock();
-    sm.unlock();
+        sm.lock();
+        sm.unlock();
 
-    cout << "\n success";
+        cout << "\n success";
+        bResult = true;
+    }
+    catch (std::exception & e)
+    {
+#ifdef PRINT_TRACE
+        std::cerr << "\n" << e.what();
+#endif
+        cout << "\n FAIL";
+    }
+
     cout << " : sanity test - single threaded shared and exclusive locking." << std::flush;
+    return bResult;
 }
 
 
@@ -249,22 +267,28 @@ private:
     lockfree::shared_mutex m_sm;
 };
 
-void testcase_container()
+bool testcase_container()
 {
+    bool bResult = false;
     try
     {
         test_linked_list_single_threaded<linked_list_multi_threaded>();
         cout << "\n success";
+        bResult = true;
     }
     catch (std::exception & e)
     {
+#ifdef PRINT_TRACE
+        std::cerr << "\n" << e.what();
+#endif
         cout << "\n FAIL";
     }
 
     cout << " : single threaded test - multi thread safe container." << std::flush;
+    return bResult;
 }
 
-bool testcase_container_parallelism()
+bool testcase_container_parallelism(bool suppress_output = false)
 {
     linked_list_multi_threaded mtl;
 
@@ -320,30 +344,54 @@ bool testcase_container_parallelism()
         {
             failed = true;
 #ifdef PRINT_TRACE
-            std::cerr << "\n" << e.what();
+            std::cerr << "\n" << e.what() << std::flush;
 #endif
         }
     }
 
-    if (failed)
+    if (!suppress_output)
     {
-        cout << "\n FAIL";
+        if (failed)
+        {
+            cout << "\n FAIL";
+        }
+        else
+        {
+            cout << "\n success";
+        }
+        cout << " : parallelism test - multi thread safe container." << std::flush;
     }
-    else
-    {
-        cout << "\n success";
-    }
-    cout << " : parallelism test - multi thread safe container." << std::flush;
 
     return (!failed);
 }
 
+#define RUN_TEST(testcase) { if (!testcase()) return 1;}
 int main(int argc, char ** argv)
 {
-    testcase_sanity();
-    testcase_container();
+    RUN_TEST(testcase_sanity);
+    RUN_TEST(testcase_container);
+    RUN_TEST(testcase_container_parallelism);
 
-    testcase_container_parallelism();
+#ifdef STRESS_TEST
+    auto start = chrono::system_clock::now();
+    unsigned run_count = 0;
+    cout << "\n";
+    while (testcase_container_parallelism(true))
+    {
+        run_count++;
+        cout << " run_count: " << run_count << "\r" << std::flush;
+    }
+    auto stop = chrono::system_clock::now();
+
+    auto run_nano = stop - start;
+    auto run_min = run_nano.count() / 1000000000 / 60;
+    cout << "\n Failed after " << run_min / 60 << ":"
+        << std::setw(2) << std::setfill ('0')
+        << run_min % 60
+        << std::setw(0) << std::setfill (' ')
+        << " hrs"
+    ;
+#endif // STRESS_TEST
 
     cout << "\ndone\n" << flush;
     //getchar();
