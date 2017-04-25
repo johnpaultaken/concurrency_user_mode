@@ -10,6 +10,18 @@
 // using the lockfree shared_mutex from this repo.
 //
 
+// To enable output of more info on failure.
+#define PRINT_TRACE
+
+// To enable stress testing until failure.
+//#define STRESS_TEST
+
+// To enable testing of the test code itself,
+// especially the parallelism test function testcase_container_parallelism().
+// Enabling this line requires compile option "g++ -std=c++17".
+//#define TEST_TESTCODE
+
+
 #include "shared_mutex.h"
 
 // This is used for the std::unique_lock wrapper only;
@@ -41,8 +53,6 @@ using std::future;
 using std::random_device;
 namespace chrono = std::chrono;
 
-#define PRINT_TRACE
-#define STRESS_TEST
 
 bool testcase_sanity()
 {
@@ -239,40 +249,47 @@ void test_linked_list_single_threaded()
 // to a multi-thread safe list
 // using the lockfree shared_mutex.
 //
+template<class shared_mutex>
 class linked_list_multi_threaded: public linked_list_single_threaded
 {
 public:
     void pop_back()
     {
-        unique_lock<lockfree::shared_mutex> ul(m_sm);
+        unique_lock<shared_mutex> ul(m_sm);
 
         return linked_list_single_threaded::pop_back();
     }
 
     void push_back()
     {
-        unique_lock<lockfree::shared_mutex> ul(m_sm);
+        unique_lock<shared_mutex> ul(m_sm);
 
         return linked_list_single_threaded::push_back();
     }
 
     pair<unsigned int, unsigned int> peek_back()
     {
-        shared_lock<lockfree::shared_mutex> sl(m_sm);
+        shared_lock<shared_mutex> sl(m_sm);
 
         return linked_list_single_threaded::peek_back();
     }
 
 private:
-    lockfree::shared_mutex m_sm;
+    shared_mutex m_sm;
 };
+
+#ifdef TEST_TESTCODE
+using linked_list_mt = linked_list_multi_threaded<std::shared_mutex>;
+#else
+using linked_list_mt = linked_list_multi_threaded<lockfree::shared_mutex>;
+#endif
 
 bool testcase_container()
 {
     bool bResult = false;
     try
     {
-        test_linked_list_single_threaded<linked_list_multi_threaded>();
+        test_linked_list_single_threaded<linked_list_mt>();
         cout << "\n success";
         bResult = true;
     }
@@ -290,7 +307,7 @@ bool testcase_container()
 
 bool testcase_container_parallelism(bool suppress_output = false)
 {
-    linked_list_multi_threaded mtl;
+    linked_list_mt mtl;
 
     static const unsigned int maxyield = 6;
 
