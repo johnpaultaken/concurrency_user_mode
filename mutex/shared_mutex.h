@@ -44,8 +44,11 @@ public:
         // Then claim exclusive access which prevents any new shared or exclusive access.
         //
         bool expected = false;
-        // memory_order_acquire on success due to subsequent exclusive reads must happen after this read
-        //      and also the following m_shared_counter read.
+        // memory_order_acquire on success due to all PD reads issued after this read must 'happen after' this read
+        // PD is data sturcture protected by using this shared_mutex.
+        // Q. How do I make sure any PD write issued after this read 'happens after' this read?
+        //    I believe since the PD write is going to be 'dependent' on the PD read before,
+        //    the correct memory order will naturally happen.
         while (!m_exclusive_access.compare_exchange_weak(expected, true, memory_order_acquire, memory_order_relaxed));
         {
             expected = false;
@@ -54,8 +57,7 @@ public:
         //
         // Wait for all current shared accesses to exit.
         //
-        // Q. How do I make sure any write following this exclusive lock will not be sequenced before it?
-        //      Do I have to use memory_order_seq_cst here for that to happen.
+        // This m_shared_counter read 'happens after' previous m_exclusive_access read due to its memory_order_acquire.
         int ctr = -1;
         while ((ctr = m_shared_counter.load(memory_order_relaxed)) != 0)
         {
@@ -73,11 +75,12 @@ public:
         // increment shared counter
         //
         int current_ctr = m_shared_counter.load(memory_order_relaxed);
-        // memory_order_acquire on success due to subsequent m_exclusive_access read must happen after this increment.
+        // subsequent m_exclusive_access read must 'happen after' this read. memory_order_acquire on success does it.
+        // subsequent m_exclusive_access read must 'happen after' this write. Since m_shared_counter read and write are atomic this should happen automatically.
         while (!m_shared_counter.compare_exchange_weak(current_ctr, current_ctr + 1, memory_order_acquire, memory_order_relaxed));
 
-        // memory_order_acquire due to subsequent shared reads must happen after this read
-        //      and also the following memory_order_relaxed reads.
+        // memory_order_acquire due to all PD reads issued after this read must 'happen after' this read.
+        // PD is data structure protected by using this shared_mutex.
         if (m_exclusive_access.load(memory_order_acquire))
         {
             //
@@ -85,11 +88,13 @@ public:
             // This is required so that the next wait may not cause a deadlock.
             //
             current_ctr++;
-            // memory_order_acquire on success due to subsequent m_exclusive_access read loop must happen after this decrement.
+            // This m_shared_counter read 'happens after' previous m_exclusive_access read due to its memory_order_acquire.
+            // However memory_order_acquire is needed here for properly ordering the following read.
             while (!m_shared_counter.compare_exchange_weak(current_ctr, current_ctr - 1, memory_order_acquire, memory_order_relaxed));
 
-            // Wait until current exclusive access has exited.
-            while (m_exclusive_access.load(memory_order_relaxed));
+            // This m_exclusive_access read must happen after previous m_shared_counter read due to its memory_order_acquire.
+            // However memory_order_acquire is needed here for properly ordering the following read that happens due to recursive call.
+            while (m_exclusive_access.load(memory_order_acquire));
 
             // repeat attempt to shared lock.
             lock_shared();
@@ -99,7 +104,8 @@ public:
     // to exit exclusive access.
     void unlock()
     {
-        // memory_order_release due to all exclusive access writes issued before this must happen before this write.
+        // memory_order_release due to all PD writes issued before this write must 'happen before' this write.
+        // PD is data structure protected by using this shared_mutex.
         m_exclusive_access.store(false, memory_order_release);
     }
 
@@ -110,8 +116,7 @@ public:
         // decrement shared counter.
         //
         int current_ctr = m_shared_counter.load(memory_order_relaxed);
-        // memory_order_acquire on success due to any subsequent m_shared_counter read must happen after this decrement.
-        while (!m_shared_counter.compare_exchange_weak(current_ctr, current_ctr - 1, memory_order_acquire, memory_order_relaxed));
+        while (!m_shared_counter.compare_exchange_weak(current_ctr, current_ctr - 1, memory_order_relaxed, memory_order_relaxed));
     }
 
 private:
