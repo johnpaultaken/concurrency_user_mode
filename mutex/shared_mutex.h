@@ -22,6 +22,27 @@ Notes:
 This implementation uses lock free atomic operations compare and swap, swap, load, store.
 The interface adheres to the C++17 shared_mutex interface.
 */
+
+/*
+Design:
+A counter keeps track of shared accesses. shared_counter
+A flag keeps track of exclusive access. exclusive_flag
+
+When entering shared access exclusive_flag must be off.
+When entering exclusive access exclusive_flag must be off and also
+shared_counter must be zero.
+
+shared access enter:
+    1. while exclusive_flag is on loop.
+    2. increment shared_counter.
+exclusive access:
+    a. if exclusive_flag is off then turn it on; else loop.
+    b. wait for shared_counter to become zero.
+Since both steps 1 and 2 cannot be executed atomically, one thread could be between them
+while another thread goes past a and b. This can cause shared and exclusive access
+to happen simultaneously. A remedy is provided for this situation.
+ */
+
 namespace lockfree
 {
 
